@@ -16,6 +16,13 @@ suppressPackageStartupMessages({
 brand_green <- "#1B5E20"
 STRINGS_PATHS <- c("./data/STRINGS_new.xlsx","data/STRINGS_new.xlsx","STRINGS_new.xlsx")
 
+# ---- Force Chrome path for pagedown in container ----
+chrome_path <- "/usr/local/bin/google-chrome"
+
+options(pagedown.chrome = chrome_path)
+Sys.setenv(PAGEDOWN_CHROMIUM = chrome_path)
+
+
 # ---------- Helpers ----------
 as_posix_safe <- function(x){
   suppressWarnings(lubridate::parse_date_time(
