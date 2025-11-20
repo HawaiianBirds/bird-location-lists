@@ -1,0 +1,10 @@
+name: location_lists
+title:
+username: sdzwa-hawaii
+account: sdzwa-hawaii
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 15993328
+bundleId: 11143209
+url: https://sdzwa-hawaii.shinyapps.io/location_lists/
+version: 1
