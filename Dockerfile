@@ -6,7 +6,9 @@ FROM rocker/shiny:latest
 # ----------------------------
 RUN apt-get update && apt-get install -y \
     libcurl4-openssl-dev libxml2-dev libssl-dev \
-    libfontconfig1 libfreetype6 libpng-dev libtiff5-dev libjpeg-dev \
+    libfontconfig1 libfontconfig1-dev libfreetype6 libpng-dev libtiff5-dev libjpeg-dev \
+    libharfbuzz-dev libfribidi-dev \
+    libv8-dev \
     libgtk2.0-0 libx11-xcb1 libxcomposite1 libxcursor1 libxdamage1 \
     libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 libxtst6 \
     ca-certificates fonts-liberation fonts-dejavu-core fonts-dejavu-extra \
@@ -40,7 +42,9 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 # ----------------------------
 # Install R packages needed by the app
 # ----------------------------
-RUN R -e "install.packages(c('shiny','shinydashboard','readxl','dplyr','tidyr','lubridate','stringr','purrr','gt','htmltools','pagedown','webshot2','rmarkdown'), repos='https://cloud.r-project.org')"
+RUN R -e "install.packages(c('shiny','shinydashboard','readxl','dplyr','tidyr','lubridate','stringr','purrr','htmltools','pagedown','webshot2','rmarkdown','V8','remotes'), repos='https://cloud.r-project.org')"
+
+RUN R -e "remotes::install_github('rstudio/juicyjuice'); remotes::install_github('rstudio/gt')"
 
 # ----------------------------
 # Copy the Shiny app
