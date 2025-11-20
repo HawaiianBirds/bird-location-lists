@@ -35,9 +35,12 @@ RUN echo '#!/bin/bash\n/usr/bin/google-chrome --no-sandbox $*' > /usr/local/bin/
 # ----------------------------
 # Environment variables for headless Chrome / Pagedown
 # ----------------------------
-ENV CHROME_BIN=/usr/local/bin/google-chrome
-ENV PAGEDOWN_CHROMIUM=/usr/local/bin/google-chrome
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV CHROME_BIN=/usr/local/bin/google-chrome \
+    PAGEDOWN_CHROMIUM=/usr/local/bin/google-chrome \
+    PAGEDOWN_CHROME=/usr/local/bin/google-chrome \
+    CHROMOTE_CHROME=/usr/local/bin/google-chrome \
+    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+
 
 # ----------------------------
 # Install R packages needed by the app
