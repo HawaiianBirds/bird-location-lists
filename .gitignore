@@ -1,0 +1,18 @@
+# R & RStudio files
+.Rhistory
+.RData
+.Rproj.user/
+.Ruserdata
+
+# Shiny deployment folders
+rsconnect/
+
+# Excel / data files (you can remove this line if you want some data tracked)
+data/*.xlsx
+
+# Temporary or OS-specific files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
