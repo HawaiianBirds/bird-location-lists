@@ -60,6 +60,11 @@ RUN mkdir -p /srv/shiny-server/app_cache && \
 EXPOSE 3838
 
 # ----------------------------
+# Start Shiny app
+# ----------------------------
+CMD ["R", "-e", "port <- as.numeric(Sys.getenv('PORT', '3838')); shiny::runApp('/srv/shiny-server', host = '0.0.0.0', port = port)"]
+
+# ----------------------------
 # Switch to shiny user
 # ----------------------------
 USER shiny
