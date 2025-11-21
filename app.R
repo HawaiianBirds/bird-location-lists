@@ -1,4 +1,4 @@
-#### Backup 7b - Final####
+#### Backup 14 - Final - Fix pretty PDF ####
 # app.R — Bird Location Lists Dashboard (pagedown/webshot2 + chrome-path.txt)
 options(shiny.maxRequestSize = 100 * 1024^2)  # 100 MB
 
@@ -16,26 +16,42 @@ suppressPackageStartupMessages({
 brand_green <- "#1B5E20"
 STRINGS_PATHS <- c("./data/STRINGS_new.xlsx","data/STRINGS_new.xlsx","STRINGS_new.xlsx")
 
-# Small helper to locate Chrome/Chromium in the container
+# ---- Chrome path discovery for local use (Mac/RStudio) ----
 .find_chrome <- function() {
-  # Prefer explicit option/env if set
-  candidates <- c(
-    getOption("pagedown.chrome", ""),
-    Sys.getenv("PAGEDOWN_CHROMIUM", ""),
-    "/usr/local/bin/google-chrome",
-    "/usr/bin/google-chrome"
-  )
+  # 1) Option set in R
+  ch <- getOption("pagedown.chrome", "")
+  if (nzchar(ch)) return(ch)
   
-  candidates <- candidates[nzchar(candidates)]
-  candidates <- candidates[file.exists(candidates)]
+  # 2) Env var
+  ch <- Sys.getenv("PAGEDOWN_CHROMIUM", "")
+  if (nzchar(ch)) return(ch)
   
-  if (length(candidates)) {
-    candidates[[1]]
-  } else {
-    ""
+  # 3) chrome-path.txt next to app.R (for local override)
+  cfg <- "chrome-path.txt"
+  if (file.exists(cfg)) {
+    ch <- trimws(readLines(cfg, warn = FALSE)[1])
+    if (nzchar(ch)) return(ch)
   }
+  
+  # 4) Try pagedown's finder (works on many platforms)
+  if (requireNamespace("pagedown", quietly = TRUE)) {
+    ch <- try(pagedown::find_chrome(), silent = TRUE)
+    if (!inherits(ch, "try-error") && length(ch) && nzchar(ch)) return(ch)
+  }
+  
+  # 5) Fallback: look for common Chrome binaries (Mac/Linux)
+  candidates <- Sys.which(c(
+    "google-chrome",
+    "chromium",
+    "chrome",
+    "Google Chrome",
+    "Google Chrome.app/Contents/MacOS/Google Chrome"
+  ))
+  candidates <- unique(candidates[nzchar(candidates)])
+  if (length(candidates) > 0) return(candidates[[1]])
+  
+  ""  # let caller handle "no chrome found"
 }
-
 
 # ---- Detect Chrome path in container ----
 chrome_path <- unname(Sys.which("google-chrome"))
@@ -57,9 +73,6 @@ message(
   " PAGEDOWN_CHROMIUM=", Sys.getenv("PAGEDOWN_CHROMIUM"),
   " CHROMOTE_CHROME=", Sys.getenv("CHROMOTE_CHROME")
 )
-
-
-
 
 
 # ---- Debug logging for Chrome / pagedown on startup ----
@@ -508,75 +521,208 @@ server <- function(input, output, session){
   })
   
   # ---------- Helper: build HTML layout for PDF ----------
+  # ---- HTML builder for a single-page A4 with explicit columns ----
   grid_html_for_pdf <- function(
-    gt_list, doc_title,
-    n_cols        = 2,
-    col_align     = "initial",
-    margin_top_mm = 2,
+    gt_list,
+    doc_title,
+    n_cols           = 2,
+    col_align        = if (n_cols <= 1) "left" else "initial",
+    margin_top_mm    = 2,
     margin_right_mm  = 2,
     margin_bottom_mm = 2,
     margin_left_mm   = 2,
     title_left_mm    = 11,
     col_gap_px       = 3
   ) {
-    # Convert each gt object to HTML, if needed
-    table_divs <- lapply(gt_list, function(g) {
-      if (inherits(g, "gt_tbl")) {
-        htmltools::HTML(gt::as_raw_html(g))
-      } else {
-        g
+    n <- length(gt_list)
+    if (n == 0) {
+      stop("grid_html_for_pdf(): gt_list is empty.")
+    }
+    
+    # Keep your ordering helper if you have it
+    if (exists("order_for_pdf_columns", mode = "function")) {
+      idx <- order_for_pdf_columns(n, n_cols)
+      gt_list <- gt_list[idx]
+    }
+    
+    # Approximate height for scaling (same logic as before)
+    rows       <- if (n_cols <= 1) n else ceiling(max(1, n) / n_cols)
+    content_px <- rows * 118 + max(0, rows - 1) * 2
+    page_h_px  <- 842 * 1.3333  # A4 @ ~96dpi
+    scale      <- min(1, page_h_px / max(1, content_px))
+    scale      <- max(0.28, scale * 0.985)
+    
+    # Build content as explicit columns instead of CSS column-count
+    if (n_cols <= 1) {
+      # Single column = just stack all gt tables
+      content_tags <- tagList(lapply(gt_list, as.tags))
+    } else {
+      # Split gt_list across n_cols explicitly (by position)
+      cols_list <- vector("list", n_cols)
+      for (i in seq_along(gt_list)) {
+        col_idx <- ((i - 1) %% n_cols) + 1
+        cols_list[[col_idx]] <- c(cols_list[[col_idx]], list(as.tags(gt_list[[i]])))
       }
-    })
+      
+      cols_divs <- lapply(cols_list, function(tts) {
+        div(class = "col", tagList(tts))
+      })
+      content_tags <- div(class = "cols-container", !!!cols_divs)
+    }
     
-    flex_basis <- if (n_cols <= 1) "100%" else sprintf("%.0f%%", 100 / n_cols)
+    columns_style <- if (n_cols <= 1) {
+      "display:inline-block; width:auto; text-align:left;"
+    } else {
+      # We now use flexbox for columns, but keep this for any inline tweaks
+      "display:block; width:100%; text-align:initial;"
+    }
     
-    htmltools::tags$html(
-      htmltools::tags$head(
-        htmltools::tags$title(doc_title),
-        htmltools::tags$style(htmltools::HTML(sprintf(
-          "
-        body {
-          margin: %smm %smm %smm %smm;
-          font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-        }
-        h1.page-title {
-          margin-left: %smm;
-          font-size: 18pt;
-        }
-        .tables {
-          display: flex;
-          flex-wrap: wrap;
-          gap: %spx;
-        }
-        .tables > div.table-block {
-          flex: 0 0 %s;
-        }
-        ",
-          margin_top_mm, margin_right_mm, margin_bottom_mm, margin_left_mm,
-          title_left_mm,
-          col_gap_px,
-          flex_basis
-        )))
-      ),
-      htmltools::tags$body(
-        htmltools::tags$h1(class = "page-title", doc_title),
-        htmltools::tags$div(
-          class = "tables",
-          lapply(table_divs, function(tbl) {
-            htmltools::tags$div(class = "table-block", tbl)
-          })
-        )
-      )
+    htmlTemplate(
+      text_ = "<!DOCTYPE html>
+<html>
+<head>
+  <meta charset='utf-8'>
+  <style>
+    @page {
+      size: A4 portrait;
+      margin-top: {{mt}}mm;
+      margin-right: {{mr}}mm;
+      margin-bottom: {{mb}}mm;
+      margin-left: {{ml}}mm;
+    }
+
+    :root {
+      --gap: {{gap}}px;
+    }
+
+    @media print {
+      * {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+      .gt_table, .gt_table * {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+    }
+
+    body {
+      font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial;
+      margin:0;
+    }
+
+    header.title {
+      position:fixed;
+      top:3mm;
+      left:{{title_left}}mm;
+      right:8mm;
+      text-align:left;
+      font-weight:700;
+      font-size:16px;
+    }
+
+    .content {
+      position:relative;
+      margin-top:8mm;
+      margin-bottom:0mm;
+    }
+
+    .wrap {
+      transform-origin: top left;
+      text-align: left;
+    }
+
+    /* New explicit column layout using flexbox */
+    .cols-container {
+      display:flex;
+      flex-direction:row;
+      align-items:flex-start;
+      justify-content:flex-start;
+      gap: var(--gap);
+      text-align: {{col_align}};
+    }
+
+    .cols-container .col {
+      flex: 1 1 0;
+      display:flex;
+      flex-direction:column;
+      align-items:stretch;
+    }
+
+    .gt_table {
+      margin-top:0 !important;
+      margin-bottom:0 !important;
+      break-inside:avoid-column;
+      page-break-inside:auto;
+      width:auto;
+      max-width:none;
+      table-layout:fixed;
+      border-collapse:collapse;
+    }
+
+    .gt_table td, .gt_table th {
+      word-break:break-word;
+      white-space:normal;
+    }
+
+    .gt_table .gt_col_headings{
+      font-size:10.5px;
+      line-height:1.05;
+    }
+
+    .gt_table .gt_row{
+      font-size:10.5px;
+      line-height:1.05;
+    }
+
+    .gt_table .gt_title{
+      font-size:10.5px;
+      line-height:1.05;
+      margin:0;
+      padding:0;
+    }
+
+    .gt_table .gt_col_headings,
+    .gt_table .gt_row,
+    .gt_table .gt_title,
+    .gt_table .gt_heading {
+      padding-top:0 !important;
+      padding-bottom:0 !important;
+    }
+
+    .gt_table th, .gt_table td {
+      padding-top:0 !important;
+      padding-bottom:0 !important;
+    }
+  </style>
+</head>
+<body>
+  <header class='title'>{{doc_title}}</header>
+  <div class='content'>
+    <div class='wrap' style='transform: scale({{scale}}); width: calc(100%/{{scale}});'>
+      <div class='columns' style='{{columns_style}}'>{{content}}</div>
+    </div>
+  </div>
+</body>
+</html>",
+      content       = content_tags,
+      scale         = sprintf("%.3f", scale),
+      doc_title     = doc_title,
+      ncols         = max(1, n_cols),
+      gap           = col_gap_px,
+      col_align     = col_align,
+      mt = margin_top_mm, mr = margin_right_mm, mb = margin_bottom_mm, ml = margin_left_mm,
+      title_left    = title_left_mm,
+      columns_style = columns_style
     )
   }
   
-  # ---------- HTML -> PDF via headless Chrome CLI ----------
+  # ---------- HTML -> PDF (Docker = Chrome CLI, local = pagedown/webshot2) ----------
   do_pdf <- function(
     gt_list, file, doc_title, n_cols = 2,
     margin_top_mm = 2, margin_right_mm = 2, margin_bottom_mm = 2, margin_left_mm = 2,
     title_left_mm = 11, col_gap_px = 3
   ) {
-    # Build the HTML page for the tables (same as before)
     page <- grid_html_for_pdf(
       gt_list, doc_title,
       n_cols           = n_cols,
@@ -598,43 +744,104 @@ server <- function(input, output, session){
       if (file.exists(out_pdf))  unlink(out_pdf)
     }, add = TRUE)
     
-    # --- Use headless Chrome directly ---
-    chrome <- Sys.which("google-chrome")
-    message("[do_pdf] chrome path = ", chrome)
+    # Detect if we're inside Docker/Render
+    in_docker <- file.exists("/.dockerenv")
     
-    if (!nzchar(chrome)) {
-      stop("google-chrome not found in PATH inside container; cannot render PDF.")
-    }
-    
-    # Args for headless print-to-pdf
-    args <- c(
-      "--headless",
-      "--disable-gpu",
-      "--no-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-software-rasterizer",
-      paste0("--print-to-pdf=", shQuote(out_pdf)),
-      shQuote(out_html)
-    )
-    
-    message("[do_pdf] running: ", chrome, " ", paste(args, collapse = " "))
-    res <- try(
-      system2(chrome, args, stdout = TRUE, stderr = TRUE),
-      silent = TRUE
-    )
-    
-    message("[do_pdf] chrome stdout/stderr:\n", paste(res, collapse = "\n"))
-    
-    if (!file.exists(out_pdf) || file.info(out_pdf)$size < 1024) {
-      sz <- if (file.exists(out_pdf)) file.info(out_pdf)$size else NA
-      stop(
-        sprintf(
-          "Chrome did not create a valid PDF (size = %s). See [do_pdf] logs above.",
-          as.character(sz)
-        )
+    if (in_docker) {
+      # ----- Docker / Render path: use Chrome CLI shim -----
+      chrome <- "/usr/local/bin/google-chrome"  # shim from Dockerfile
+      message("[do_pdf] (Docker) chrome path = ", chrome)
+      
+      if (!nzchar(chrome) || !file.exists(chrome)) {
+        stop("In Docker but /usr/local/bin/google-chrome not found; cannot render PDF.")
+      }
+      
+      args <- c(
+        "--headless",
+        "--disable-gpu",
+        "--no-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-software-rasterizer",
+        "--print-to-pdf-no-header",
+        paste0("--print-to-pdf=", shQuote(out_pdf)),
+        shQuote(out_html)
       )
+      
+      message("[do_pdf] (Docker) running: ", chrome, " ", paste(args, collapse = " "))
+      res <- try(
+        system2(chrome, args, stdout = TRUE, stderr = TRUE),
+        silent = TRUE
+      )
+      message("[do_pdf] (Docker) chrome stdout/stderr:\n", paste(res, collapse = "\n"))
+      
+      if (!file.exists(out_pdf) || file.info(out_pdf)$size < 1024) {
+        sz <- if (file.exists(out_pdf)) file.info(out_pdf)$size else NA
+        stop(
+          sprintf(
+            "Chrome did not create a valid PDF in Docker (size = %s). See [do_pdf] logs above.",
+            as.character(sz)
+          )
+        )
+      }
+      
+    } else {
+      # ----- Local (RStudio/mac) path: pagedown + webshot2 -----
+      tried_pagedown <- FALSE
+      ok <- FALSE
+      
+      if (requireNamespace("pagedown", quietly = TRUE)) {
+        ch <- .find_chrome()
+        if (nzchar(ch)) {
+          options(pagedown.chrome = ch)
+          Sys.setenv(PAGEDOWN_CHROMIUM = ch)
+        }
+        tried_pagedown <- TRUE
+        message("[do_pdf] (local) trying pagedown::chrome_print() with ", ch)
+        
+        res <- try({
+          pagedown::chrome_print(input = out_html, output = out_pdf, timeout = 180)
+          file.exists(out_pdf) && file.info(out_pdf)$size > 1024
+        }, silent = TRUE)
+        
+        ok <- isTRUE(res)
+        if (!ok) {
+          message("[do_pdf] (local) pagedown error: ", paste0(res, collapse = " "))
+        }
+      }
+      
+      if (!ok && requireNamespace("webshot2", quietly = TRUE)) {
+        message("[do_pdf] (local) trying webshot2::webshot() fallback")
+        
+        res2 <- try({
+          webshot2::webshot(
+            url   = paste0("file://", normalizePath(out_html, winslash = "/")),
+            file  = out_pdf,
+            vwidth = 1200, vheight = 1600, zoom = 1
+          )
+          file.exists(out_pdf) && file.info(out_pdf)$size > 1024
+        }, silent = TRUE)
+        
+        ok <- isTRUE(res2)
+        if (!ok) {
+          message("[do_pdf] (local) webshot2 error: ", paste0(res2, collapse = " "))
+        }
+      }
+      
+      if (!ok) {
+        msg <- if (!tried_pagedown) {
+          "Neither 'pagedown' nor 'webshot2' is installed. Install one of them to enable PDF export:\ninstall.packages(c('pagedown','webshot2'))"
+        } else {
+          paste(
+            "Failed to render PDF with pagedown and webshot2.",
+            "Check the logs for '[do_pdf] (local) pagedown error' or '[do_pdf] (local) webshot2 error' messages.",
+            sep = "\n"
+          )
+        }
+        stop(msg)
+      }
     }
     
+    # Copy temp PDF into the download target
     if (!file.copy(out_pdf, file, overwrite = TRUE)) {
       stop("Failed to write PDF to the download target.")
     }
