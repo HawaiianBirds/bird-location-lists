@@ -1,4 +1,4 @@
-# Base image: R + Shiny
+# Base image: R + Shiny (now simplified)
 FROM rocker/shiny:latest
 
 # ----------------------------

@@ -642,7 +642,7 @@ server <- function(input, output, session){
     invisible(TRUE)
   }
   
-  
+
   
   # ---------- Download handlers ----------
   output$dl_pdf_kbcc_al <- downloadHandler(
