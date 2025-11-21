@@ -37,18 +37,27 @@ STRINGS_PATHS <- c("./data/STRINGS_new.xlsx","data/STRINGS_new.xlsx","STRINGS_ne
 }
 
 
-# ---- Force Chrome path for pagedown in container ----
-chrome_path <- "/usr/local/bin/google-chrome"
-options(pagedown.chrome = chrome_path)
-Sys.setenv(CHROMOTE_CHROME = chrome_path)
-Sys.setenv(PAGEDOWN_CHROMIUM = chrome_path)
+# ---- Detect Chrome path in container ----
+chrome_path <- unname(Sys.which("google-chrome"))
 
+if (!nzchar(chrome_path)) {
+  message("[INIT] google-chrome NOT found on PATH.")
+} else {
+  message("[INIT] Using Chrome at: ", chrome_path)
+  
+  options(pagedown.chrome = chrome_path)
+  Sys.setenv(PAGEDOWN_CHROMIUM = chrome_path)
+  Sys.setenv(CHROMOTE_CHROME = chrome_path)
+}
 
 message(
-  "[INIT] App starting. CHROME_BIN=", Sys.getenv("CHROME_BIN"),
+  "[INIT] App starting. detected chrome_path=", chrome_path,
+  " CHROME_BIN=", Sys.getenv("CHROME_BIN"),
   " PAGEDOWN_CHROMIUM=", Sys.getenv("PAGEDOWN_CHROMIUM"),
   " CHROMOTE_CHROME=", Sys.getenv("CHROMOTE_CHROME")
 )
+
+
 
 
 # ---- Debug logging for Chrome / pagedown on startup ----
