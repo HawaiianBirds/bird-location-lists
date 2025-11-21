@@ -6,16 +6,15 @@ FROM rocker/shiny:latest
 # ----------------------------
 RUN apt-get update && apt-get install -y \
     libcurl4-openssl-dev libxml2-dev libssl-dev \
-    libfontconfig1 libfontconfig1-dev libfreetype6 libpng-dev libtiff5-dev libjpeg-dev \
-    libharfbuzz-dev libfribidi-dev \
-    libv8-dev \
+    libfontconfig1 libfreetype6 libpng-dev libtiff5-dev libjpeg-dev \
     libgtk2.0-0 libx11-xcb1 libxcomposite1 libxcursor1 libxdamage1 \
     libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 libxtst6 \
     ca-certificates fonts-liberation fonts-dejavu-core fonts-dejavu-extra \
     xdg-utils wget \
-    gnupg2 curl \
+    gnupg2 curl git \
     texlive texlive-latex-base texlive-latex-extra texlive-fonts-recommended \
     && rm -rf /var/lib/apt/lists/*
+
 
 # ----------------------------
 # Install Google Chrome Stable
@@ -48,9 +47,7 @@ ENV CHROME_BIN=/usr/local/bin/google-chrome \
 # Install CRAN pkgs (including remotes)
 RUN R -e "install.packages(c('shiny','shinydashboard','readxl','dplyr','tidyr','lubridate','stringr','purrr','htmltools','pagedown','webshot2','rmarkdown','V8','remotes'), repos='https://cloud.r-project.org')"
 
-# Install juicyjuice + gt from GitHub using PAT
-RUN R -e "remotes::install_github('rstudio/juicyjuice', auth_token = Sys.getenv('GITHUB_PAT')); remotes::install_github('rstudio/gt', auth_token = Sys.getenv('GITHUB_PAT'))"
-
+RUN R -e "remotes::install_git('https://github.com/rstudio/juicyjuice.git'); remotes::install_git('https://github.com/rstudio/gt.git')"
 
 # ----------------------------
 # Copy the Shiny app
