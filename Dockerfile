@@ -29,8 +29,8 @@ RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key
 # ----------------------------
 # Shim to run Chrome with --no-sandbox
 # ----------------------------
-RUN echo '#!/bin/bash\n/usr/bin/google-chrome --no-sandbox $*' > /usr/local/bin/google-chrome && \
-    chmod u+x /usr/local/bin/google-chrome
+RUN echo '#!/bin/bash\nexec /usr/bin/google-chrome --no-sandbox "$@"\n' > /usr/local/bin/google-chrome && \
+    chmod a+rx /usr/local/bin/google-chrome
 
 # ----------------------------
 # Environment variables for headless Chrome / Pagedown

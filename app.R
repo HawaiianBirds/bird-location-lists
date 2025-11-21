@@ -48,14 +48,16 @@ if (!nzchar(chrome_path)) {
   options(pagedown.chrome = chrome_path)
   Sys.setenv(PAGEDOWN_CHROMIUM = chrome_path)
   Sys.setenv(CHROMOTE_CHROME = chrome_path)
+  Sys.setenv(CHROME_BIN       = chrome_path)  # <<< NEW
 }
 
 message(
-  "[INIT] App starting. detected chrome_path=", chrome_path,
+  "[INIT] App starting. chrome_path=", chrome_path,
   " CHROME_BIN=", Sys.getenv("CHROME_BIN"),
   " PAGEDOWN_CHROMIUM=", Sys.getenv("PAGEDOWN_CHROMIUM"),
   " CHROMOTE_CHROME=", Sys.getenv("CHROMOTE_CHROME")
 )
+
 
 
 
