@@ -570,15 +570,13 @@ server <- function(input, output, session){
     )
   }
   
-  # ---------- HTML -> PDF (pagedown first, webshot2 fallback) ----------
+  # ---------- HTML -> PDF via headless Chrome CLI ----------
   do_pdf <- function(
     gt_list, file, doc_title, n_cols = 2,
-    margin_top_mm = 2, margin_right_mm = 2,
-    margin_bottom_mm = 2, margin_left_mm = 2,
+    margin_top_mm = 2, margin_right_mm = 2, margin_bottom_mm = 2, margin_left_mm = 2,
     title_left_mm = 11, col_gap_px = 3
   ) {
-    message("[do_pdf] starting. target file = ", file)
-    
+    # Build the HTML page for the tables (same as before)
     page <- grid_html_for_pdf(
       gt_list, doc_title,
       n_cols           = n_cols,
@@ -600,90 +598,49 @@ server <- function(input, output, session){
       if (file.exists(out_pdf))  unlink(out_pdf)
     }, add = TRUE)
     
-    ok <- FALSE
-    tried_pagedown <- FALSE
+    # --- Use headless Chrome directly ---
+    chrome <- Sys.which("google-chrome")
+    message("[do_pdf] chrome path = ", chrome)
     
-    # ---- Try pagedown::chrome_print() ----
-    if (requireNamespace("pagedown", quietly = TRUE)) {
-      tried_pagedown <- TRUE
-      
-      message("[do_pdf] trying pagedown::chrome_print()")
-      message("[do_pdf] getOption('pagedown.chrome') = ",
-              as.character(getOption("pagedown.chrome")))
-      message("[do_pdf] Sys.getenv('PAGEDOWN_CHROMIUM') = ",
-              Sys.getenv("PAGEDOWN_CHROMIUM"))
-      message("[do_pdf] Sys.which('google-chrome') = ",
-              paste(unname(Sys.which("google-chrome")), collapse = ","))
-      
-      res <- tryCatch({
-        pagedown::chrome_print(
-          input  = out_html,
-          output = out_pdf,
-          timeout = 180
-        )
-        size <- if (file.exists(out_pdf)) file.info(out_pdf)$size else 0
-        message("[do_pdf] pagedown output size (bytes): ", size)
-        size > 1024
-      }, error = function(e) {
-        message("[do_pdf] pagedown error: ", conditionMessage(e))
-        FALSE
-      })
-      
-      ok <- isTRUE(res)
-    } else {
-      message("[do_pdf] pagedown not available.")
+    if (!nzchar(chrome)) {
+      stop("google-chrome not found in PATH inside container; cannot render PDF.")
     }
     
-    # ---- Fallback: webshot2::webshot() ----
-    if (!ok && requireNamespace("webshot2", quietly = TRUE)) {
-      message("[do_pdf] trying webshot2::webshot() fallback")
-      
-      res2 <- tryCatch({
-        webshot2::webshot(
-          url   = paste0("file://", normalizePath(out_html, winslash = "/")),
-          file  = out_pdf,
-          vwidth  = 1200,
-          vheight = 1600,
-          zoom    = 1
+    # Args for headless print-to-pdf
+    args <- c(
+      "--headless",
+      "--disable-gpu",
+      "--no-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-software-rasterizer",
+      paste0("--print-to-pdf=", shQuote(out_pdf)),
+      shQuote(out_html)
+    )
+    
+    message("[do_pdf] running: ", chrome, " ", paste(args, collapse = " "))
+    res <- try(
+      system2(chrome, args, stdout = TRUE, stderr = TRUE),
+      silent = TRUE
+    )
+    
+    message("[do_pdf] chrome stdout/stderr:\n", paste(res, collapse = "\n"))
+    
+    if (!file.exists(out_pdf) || file.info(out_pdf)$size < 1024) {
+      sz <- if (file.exists(out_pdf)) file.info(out_pdf)$size else NA
+      stop(
+        sprintf(
+          "Chrome did not create a valid PDF (size = %s). See [do_pdf] logs above.",
+          as.character(sz)
         )
-        size <- if (file.exists(out_pdf)) file.info(out_pdf)$size else 0
-        message("[do_pdf] webshot2 output size (bytes): ", size)
-        size > 1024
-      }, error = function(e) {
-        message("[do_pdf] webshot2 error: ", conditionMessage(e))
-        FALSE
-      })
-      
-      ok <- isTRUE(res2)
-    } else if (!ok) {
-      message("[do_pdf] webshot2 not available.")
+      )
     }
     
-    # ---- If everything failed, stop with a clear message ----
-    if (!ok) {
-      if (!tried_pagedown) {
-        stop(
-          "Neither 'pagedown' nor 'webshot2' is installed. ",
-          "Install one of them to enable PDF export:\n",
-          "install.packages(c('pagedown','webshot2'))"
-        )
-      } else {
-        stop(
-          "Failed to render PDF with pagedown and webshot2.\n",
-          "Check the logs for '[do_pdf] pagedown error' or ",
-          "'[do_pdf] webshot2 error' messages."
-        )
-      }
-    }
-    
-    # ---- Copy the finished PDF to the Shiny download target ----
     if (!file.copy(out_pdf, file, overwrite = TRUE)) {
       stop("Failed to write PDF to the download target.")
     }
     
-    invisible(NULL)
+    invisible(TRUE)
   }
-  
   
   
   
