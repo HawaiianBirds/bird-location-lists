@@ -477,8 +477,6 @@ server <- function(input, output, session){
     margin_top_mm = 2, margin_right_mm = 2, margin_bottom_mm = 2, margin_left_mm = 2,
     title_left_mm = 11, col_gap_px = 3
   ){
-    message("[do_pdf] called. Target file: ", file)
-    
     page <- grid_html_for_pdf(
       gt_list, doc_title,
       n_cols           = n_cols,
@@ -494,80 +492,116 @@ server <- function(input, output, session){
     out_html <- tempfile(fileext = ".html")
     out_pdf  <- tempfile(fileext = ".pdf")
     htmltools::save_html(page, out_html)
-    message("[do_pdf] out_html = ", out_html)
-    message("[do_pdf] out_pdf (temp) = ", out_pdf)
+    
+    message("[do_pdf] Start. out_html = ", out_html, " | out_pdf = ", out_pdf, " | target file = ", file)
     
     on.exit({
       if (file.exists(out_html)) unlink(out_html)
       if (file.exists(out_pdf))  unlink(out_pdf)
+      message("[do_pdf] on.exit cleanup complete.")
     }, add = TRUE)
     
     tried <- FALSE
     ok <- FALSE
     
-    # Try pagedown with Chrome/Chromium
+    # ---------- Try pagedown + Chrome ----------
     if (requireNamespace("pagedown", quietly = TRUE)) {
-      message("[do_pdf] pagedown available. Trying chrome_print()...")
       ch <- .find_chrome()
-      message("[do_pdf] .find_chrome() returned: '", ch, "'")
+      message("[do_pdf] pagedown available. .find_chrome() returned: '", ch, "'")
+      
       if (nzchar(ch)) {
         options(pagedown.chrome = ch)
         Sys.setenv(PAGEDOWN_CHROMIUM = ch)
-        message("[do_pdf] Set pagedown.chrome & PAGEDOWN_CHROMIUM to: ", ch)
       } else {
-        message("[do_pdf] .find_chrome() did NOT find Chrome.")
+        message("[do_pdf] .find_chrome() returned empty string.")
       }
+      
       tried <- TRUE
-      res <- try({
+      
+      res <- tryCatch({
+        message("[do_pdf] Calling pagedown::chrome_print() ...")
         pagedown::chrome_print(input = out_html, output = out_pdf, timeout = 180)
-        file.exists(out_pdf) && file.info(out_pdf)$size > 1024
-      }, silent = TRUE)
-      message("[do_pdf] pagedown::chrome_print() result: ", paste0(capture.output(str(res)), collapse = " "))
+        ok_local <- file.exists(out_pdf) && file.info(out_pdf)$size > 1024
+        if (!ok_local) {
+          message("[do_pdf] pagedown::chrome_print() ran but PDF is missing or tiny. file.exists=",
+                  file.exists(out_pdf), ", size=",
+                  if (file.exists(out_pdf)) file.info(out_pdf)$size else NA_real_)
+        } else {
+          message("[do_pdf] pagedown::chrome_print() produced PDF. size=",
+                  file.info(out_pdf)$size)
+        }
+        ok_local
+      }, error = function(e) {
+        message("[do_pdf] ERROR in pagedown::chrome_print(): ", conditionMessage(e))
+        FALSE
+      })
+      
       ok <- isTRUE(res)
+      message("[do_pdf] pagedown ok = ", ok)
     } else {
-      message("[do_pdf] pagedown NOT available.")
+      message("[do_pdf] pagedown is NOT installed or not found.")
     }
     
-    # Fallback: webshot2 (Chromote)
+    # ---------- Fallback: webshot2 ----------
     if (!ok && requireNamespace("webshot2", quietly = TRUE)) {
-      message("[do_pdf] Trying webshot2 fallback...")
-      res2 <- try({
+      message("[do_pdf] Trying fallback via webshot2::webshot() ...")
+      
+      res2 <- tryCatch({
         webshot2::webshot(
           url = paste0("file://", normalizePath(out_html, winslash = "/")),
           file = out_pdf,
           vwidth = 1200, vheight = 1600, zoom = 1
         )
-        file.exists(out_pdf) && file.info(out_pdf)$size > 1024
-      }, silent = TRUE)
-      message("[do_pdf] webshot2::webshot() result: ", paste0(capture.output(str(res2)), collapse = " "))
+        ok_local <- file.exists(out_pdf) && file.info(out_pdf)$size > 1024
+        if (!ok_local) {
+          message("[do_pdf] webshot2::webshot() ran but PDF is missing or tiny. file.exists=",
+                  file.exists(out_pdf), ", size=",
+                  if (file.exists(out_pdf)) file.info(out_pdf)$size else NA_real_)
+        } else {
+          message("[do_pdf] webshot2::webshot() produced PDF. size=",
+                  file.info(out_pdf)$size)
+        }
+        ok_local
+      }, error = function(e) {
+        message("[do_pdf] ERROR in webshot2::webshot(): ", conditionMessage(e))
+        FALSE
+      })
+      
       ok <- isTRUE(res2)
+      message("[do_pdf] webshot2 ok = ", ok)
     } else if (!ok) {
-      message("[do_pdf] webshot2 not available or pagedown already succeeded.")
+      message("[do_pdf] webshot2 is NOT installed or not found.")
     }
     
+    # ---------- If still not ok, error out ----------
     if (!ok) {
       msg <- if (!tried) {
         "Neither 'pagedown' nor 'webshot2' is installed. Install one of them to enable PDF export:\ninstall.packages(c('pagedown','webshot2'))"
       } else {
         paste(
           "Could not render PDF with Chrome/Chromium.",
-          "Please ensure Chrome/Chromium is installed and set its path, for example:",
+          "Check logs for [do_pdf] messages to see specific errors from pagedown/webshot2.",
+          "Ensure Chrome/Chromium is installed and set its path, for example:",
           "  options(pagedown.chrome = '/path/to/Google Chrome')",
           "  Sys.setenv(PAGEDOWN_CHROMIUM = '/path/to/Google Chrome')",
           "Or place that path in a file named 'chrome-path.txt' next to app.R (first line only).",
           sep = "\n"
         )
       }
-      message("[do_pdf] ERROR: ", msg)
+      message("[do_pdf] FINAL FAILURE. Raising error.")
       stop(msg)
     }
     
-    message("[do_pdf] PDF appears OK. Copying '", out_pdf, "' -> '", file, "'")
+    # ---------- Copy to Shiny download target ----------
     if (!file.copy(out_pdf, file, overwrite = TRUE)) {
+      message("[do_pdf] Failed to copy out_pdf to target file.")
       stop("Failed to write PDF to the download target.")
+    } else {
+      message("[do_pdf] SUCCESS: Copied PDF to target file. size=",
+              file.info(file)$size)
     }
-    message("[do_pdf] Finished successfully.")
   }
+  
   
   
   # ---------- Download handlers ----------
