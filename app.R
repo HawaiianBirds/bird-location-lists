@@ -22,6 +22,10 @@ chrome_path <- "/usr/local/bin/google-chrome"
 options(pagedown.chrome = chrome_path)
 Sys.setenv(PAGEDOWN_CHROMIUM = chrome_path)
 
+message("[INIT] App starting. CHROME_BIN=", Sys.getenv("CHROME_BIN"),
+        " PAGEDOWN_CHROMIUM=", Sys.getenv("PAGEDOWN_CHROMIUM"))
+
+
 # ---- Debug logging for Chrome / pagedown on startup ----
 try({
   chrome_detected <- tryCatch(
@@ -467,134 +471,14 @@ server <- function(input, output, session){
     paste0("MBCC — Small forest bird locations as of ", fmt_date(input$subset_date))
   })
   
-  # ---- HTML builder for a single-page A4 ----
-  grid_html_for_pdf <- function(
-    gt_list,
-    doc_title,
-    n_cols            = 2,
-    col_align         = if (n_cols <= 1) "left" else "initial",
-    margin_top_mm     = 2,
-    margin_right_mm   = 2,
-    margin_bottom_mm  = 2,
-    margin_left_mm    = 2,
-    title_left_mm     = 11,
-    col_gap_px        = 3
-  ){
-    n   <- length(gt_list)
-    idx <- order_for_pdf_columns(n, n_cols)
-    gt_list <- gt_list[idx]
-    
-    rows       <- if (n_cols <= 1) n else ceiling(max(1, n) / n_cols)
-    content_px <- rows * 118 + max(0, rows - 1) * 2
-    page_h_px  <- 842 * 1.3333  # A4 @ ~96dpi
-    scale      <- min(1, page_h_px / max(1, content_px))
-    scale      <- max(0.28, scale * 0.985)
-    
-    columns_style <- if (n_cols <= 1) {
-      "display:inline-block; width:auto; text-align:left;"
-    } else {
-      "display:block; width:100%; text-align:initial;"
-    }
-    
-    htmlTemplate(
-      text_ = "<!DOCTYPE html><html><head><meta charset='utf-8'>
-<style>
-  @page {
-    size: A4 portrait;
-    margin-top: {{mt}}mm;
-    margin-right: {{mr}}mm;
-    margin-bottom: {{mb}}mm;
-    margin-left: {{ml}}mm;
-  }
-  :root{ --gap: {{gap}}px }
-  body{   @media print {
-    * {
-      -webkit-print-color-adjust: exact !important;
-      print-color-adjust: exact !important;
-    }
-    .gt_table, .gt_table * {
-      -webkit-print-color-adjust: exact !important;
-      print-color-adjust: exact !important;
-    }
-  }
-font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial; margin:0 }
-  header.title{
-    position:fixed; top:3mm; left:{{title_left}}mm; right:8mm;
-    text-align:left; font-weight:700; font-size:16px
-  }
-  .content{ position:relative; margin-top:8mm; margin-bottom:0mm }
-  .wrap{
-    transform-origin: top left;
-    text-align: left;
-  }
-  .columns{
-    column-count: {{ncols}};
-    column-gap: var(--gap);
-    column-fill: auto;
-    text-align: {{col_align}};
-  }
-
-  .gt_table{
-    margin-top:0 !important; margin-bottom:0 !important;
-    break-inside:avoid-column; page-break-inside:auto;
-    width:auto; max-width:none; table-layout:fixed; border-collapse:collapse;
-  }
-  .gt_table td, .gt_table th { word-break:break-word; white-space:normal; }
-  .gt_table .gt_col_headings{ font-size:10.5px; line-height:1.05; }
-  .gt_table .gt_row{          font-size:10.5px; line-height:1.05; }
-  .gt_table .gt_title{        font-size:10.5px; line-height:1.05; margin:0; padding:0; }
-  .gt_table .gt_col_headings, .gt_table .gt_row, .gt_table .gt_title, .gt_table .gt_heading {
-    padding-top:0 !important; padding-bottom:0 !important;
-  }
-  .gt_table th, .gt_table td { padding-top:0 !important; padding-bottom:0 !important; }
-</style></head><body>
-  <header class='title'>{{doc_title}}</header>
-  <div class='content'>
-    <div class='wrap' style='transform: scale({{scale}}); width: calc(100%/{{scale}});'>
-      <div class='columns' style='{{columns_style}}'>{{content}}</div>
-    </div>
-  </div>
-
-</body></html>",
-      content       = tagList(lapply(gt_list, function(gtt) as.tags(gtt))),
-      scale         = sprintf("%.3f", scale),
-      doc_title     = doc_title,
-      ncols         = max(1, n_cols),
-      gap           = col_gap_px,
-      col_align     = col_align,
-      mt = margin_top_mm, mr = margin_right_mm, mb = margin_bottom_mm, ml = margin_left_mm,
-      title_left    = title_left_mm,
-      columns_style = columns_style
-    )
-  }
-  
-  # ---- Chrome path discovery (no absolute paths in code) ----
-  .find_chrome <- function() {
-    ch <- getOption("pagedown.chrome", "")
-    if (nzchar(ch)) return(ch)
-    
-    ch <- Sys.getenv("PAGEDOWN_CHROMIUM", "")
-    if (nzchar(ch)) return(ch)
-    
-    cfg <- "chrome-path.txt"
-    if (file.exists(cfg)) {
-      ch <- trimws(readLines(cfg, warn = FALSE)[1])
-      if (nzchar(ch)) return(ch)
-    }
-    
-    if (requireNamespace("pagedown", quietly = TRUE)) {
-      ch <- try(pagedown::find_chrome(), silent = TRUE)
-      if (!inherits(ch, "try-error") && length(ch) && nzchar(ch)) return(ch)
-    }
-    ""  # allow caller to handle error
-  }
-  
   # ---------- HTML -> PDF (pagedown first, webshot2 fallback) ----------
   do_pdf <- function(
     gt_list, file, doc_title, n_cols = 2,
     margin_top_mm = 2, margin_right_mm = 2, margin_bottom_mm = 2, margin_left_mm = 2,
     title_left_mm = 11, col_gap_px = 3
   ){
+    message("[do_pdf] called. Target file: ", file)
+    
     page <- grid_html_for_pdf(
       gt_list, doc_title,
       n_cols           = n_cols,
@@ -610,6 +494,8 @@ font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial; 
     out_html <- tempfile(fileext = ".html")
     out_pdf  <- tempfile(fileext = ".pdf")
     htmltools::save_html(page, out_html)
+    message("[do_pdf] out_html = ", out_html)
+    message("[do_pdf] out_pdf (temp) = ", out_pdf)
     
     on.exit({
       if (file.exists(out_html)) unlink(out_html)
@@ -621,39 +507,42 @@ font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial; 
     
     # Try pagedown with Chrome/Chromium
     if (requireNamespace("pagedown", quietly = TRUE)) {
+      message("[do_pdf] pagedown available. Trying chrome_print()...")
       ch <- .find_chrome()
-      message("[DEBUG] do_pdf(): .find_chrome() returned: '", ch, "'")
-      
+      message("[do_pdf] .find_chrome() returned: '", ch, "'")
       if (nzchar(ch)) {
         options(pagedown.chrome = ch)
         Sys.setenv(PAGEDOWN_CHROMIUM = ch)
+        message("[do_pdf] Set pagedown.chrome & PAGEDOWN_CHROMIUM to: ", ch)
+      } else {
+        message("[do_pdf] .find_chrome() did NOT find Chrome.")
       }
-      
       tried <- TRUE
       res <- try({
         pagedown::chrome_print(input = out_html, output = out_pdf, timeout = 180)
-        size <- if (file.exists(out_pdf)) file.info(out_pdf)$size else NA_real_
-        message("[DEBUG] do_pdf(): pagedown chrome_print output size = ", size)
-        file.exists(out_pdf) && is.finite(size) && size > 0
+        file.exists(out_pdf) && file.info(out_pdf)$size > 1024
       }, silent = TRUE)
-      
+      message("[do_pdf] pagedown::chrome_print() result: ", paste0(capture.output(str(res)), collapse = " "))
       ok <- isTRUE(res)
+    } else {
+      message("[do_pdf] pagedown NOT available.")
     }
     
     # Fallback: webshot2 (Chromote)
     if (!ok && requireNamespace("webshot2", quietly = TRUE)) {
+      message("[do_pdf] Trying webshot2 fallback...")
       res2 <- try({
         webshot2::webshot(
           url = paste0("file://", normalizePath(out_html, winslash = "/")),
           file = out_pdf,
           vwidth = 1200, vheight = 1600, zoom = 1
         )
-        size <- if (file.exists(out_pdf)) file.info(out_pdf)$size else NA_real_
-        message("[DEBUG] do_pdf(): webshot2 output size = ", size)
-        file.exists(out_pdf) && is.finite(size) && size > 0
+        file.exists(out_pdf) && file.info(out_pdf)$size > 1024
       }, silent = TRUE)
-      
+      message("[do_pdf] webshot2::webshot() result: ", paste0(capture.output(str(res2)), collapse = " "))
       ok <- isTRUE(res2)
+    } else if (!ok) {
+      message("[do_pdf] webshot2 not available or pagedown already succeeded.")
     }
     
     if (!ok) {
@@ -669,13 +558,17 @@ font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial; 
           sep = "\n"
         )
       }
+      message("[do_pdf] ERROR: ", msg)
       stop(msg)
     }
     
+    message("[do_pdf] PDF appears OK. Copying '", out_pdf, "' -> '", file, "'")
     if (!file.copy(out_pdf, file, overwrite = TRUE)) {
       stop("Failed to write PDF to the download target.")
     }
+    message("[do_pdf] Finished successfully.")
   }
+  
   
   # ---------- Download handlers ----------
   output$dl_pdf_kbcc_al <- downloadHandler(
@@ -684,6 +577,7 @@ font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial; 
     },
     contentType = "application/pdf",
     content = function(file){
+      message("[downloadHandler dl_pdf_kbcc_al] Starting. file = ", file)
       do_pdf(
         make_tables("KBCC", TRUE, compact = TRUE),
         file,
@@ -692,6 +586,7 @@ font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial; 
         margin_top_mm = 2, margin_right_mm = 2, margin_bottom_mm = 2, margin_left_mm = 2,
         title_left_mm = 9
       )
+      message("[downloadHandler dl_pdf_kbcc_al] Finished.")
     }
   )
   
@@ -701,6 +596,7 @@ font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial; 
     },
     contentType = "application/pdf",
     content = function(file){
+      message("[downloadHandler dl_pdf_kbcc_fb] Starting. file = ", file)
       do_pdf(
         make_tables("KBCC", FALSE, compact = TRUE),
         file,
@@ -709,6 +605,7 @@ font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial; 
         margin_top_mm = 12, margin_right_mm = 14, margin_bottom_mm = 12, margin_left_mm = 25,
         title_left_mm = 0
       )
+      message("[downloadHandler dl_pdf_kbcc_fb] Finished.")
     }
   )
   
@@ -718,6 +615,7 @@ font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial; 
     },
     contentType = "application/pdf",
     content = function(file){
+      message("[downloadHandler dl_pdf_mbcc_al] Starting. file = ", file)
       do_pdf(
         make_tables("MBCC", TRUE, compact = TRUE),
         file,
@@ -726,6 +624,7 @@ font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial; 
         margin_top_mm = 12, margin_right_mm = 14, margin_bottom_mm = 12, margin_left_mm = 25,
         title_left_mm = 0
       )
+      message("[downloadHandler dl_pdf_mbcc_al] Finished.")
     }
   )
   
@@ -735,6 +634,7 @@ font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial; 
     },
     contentType = "application/pdf",
     content = function(file){
+      message("[downloadHandler dl_pdf_mbcc_fb] Starting. file = ", file)
       do_pdf(
         make_tables("MBCC", FALSE, compact = TRUE),
         file,
@@ -743,6 +643,7 @@ font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial; 
         margin_top_mm = 12, margin_right_mm = 14, margin_bottom_mm = 12, margin_left_mm = 25,
         title_left_mm = 0
       )
+      message("[downloadHandler dl_pdf_mbcc_fb] Finished.")
     }
   )
   
