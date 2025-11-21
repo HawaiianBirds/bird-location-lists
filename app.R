@@ -22,6 +22,20 @@ chrome_path <- "/usr/local/bin/google-chrome"
 options(pagedown.chrome = chrome_path)
 Sys.setenv(PAGEDOWN_CHROMIUM = chrome_path)
 
+# ---- Debug logging for Chrome / pagedown on startup ----
+try({
+  chrome_detected <- tryCatch(
+    pagedown::find_chrome(),
+    error = function(e) paste("ERROR from find_chrome():", e$message)
+  )
+  
+  message(
+    "\n[DEBUG] pagedown.chrome option: ", getOption("pagedown.chrome", "NULL"),
+    "\n[DEBUG] PAGEDOWN_CHROMIUM env: ", Sys.getenv("PAGEDOWN_CHROMIUM", "EMPTY"),
+    "\n[DEBUG] find_chrome(): ", chrome_detected, "\n"
+  )
+}, silent = TRUE)
+
 
 # ---------- Helpers ----------
 as_posix_safe <- function(x){
@@ -608,15 +622,21 @@ font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial; 
     # Try pagedown with Chrome/Chromium
     if (requireNamespace("pagedown", quietly = TRUE)) {
       ch <- .find_chrome()
+      message("[DEBUG] do_pdf(): .find_chrome() returned: '", ch, "'")
+      
       if (nzchar(ch)) {
         options(pagedown.chrome = ch)
         Sys.setenv(PAGEDOWN_CHROMIUM = ch)
       }
+      
       tried <- TRUE
       res <- try({
         pagedown::chrome_print(input = out_html, output = out_pdf, timeout = 180)
-        file.exists(out_pdf) && file.info(out_pdf)$size > 1024
+        size <- if (file.exists(out_pdf)) file.info(out_pdf)$size else NA_real_
+        message("[DEBUG] do_pdf(): pagedown chrome_print output size = ", size)
+        file.exists(out_pdf) && is.finite(size) && size > 0
       }, silent = TRUE)
+      
       ok <- isTRUE(res)
     }
     
@@ -628,8 +648,11 @@ font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial; 
           file = out_pdf,
           vwidth = 1200, vheight = 1600, zoom = 1
         )
-        file.exists(out_pdf) && file.info(out_pdf)$size > 1024
+        size <- if (file.exists(out_pdf)) file.info(out_pdf)$size else NA_real_
+        message("[DEBUG] do_pdf(): webshot2 output size = ", size)
+        file.exists(out_pdf) && is.finite(size) && size > 0
       }, silent = TRUE)
+      
       ok <- isTRUE(res2)
     }
     
