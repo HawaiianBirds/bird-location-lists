@@ -471,6 +471,69 @@ server <- function(input, output, session){
     paste0("MBCC — Small forest bird locations as of ", fmt_date(input$subset_date))
   })
   
+  # ---------- Helper: build HTML layout for PDF ----------
+  grid_html_for_pdf <- function(
+    gt_list, doc_title,
+    n_cols        = 2,
+    col_align     = "initial",
+    margin_top_mm = 2,
+    margin_right_mm  = 2,
+    margin_bottom_mm = 2,
+    margin_left_mm   = 2,
+    title_left_mm    = 11,
+    col_gap_px       = 3
+  ) {
+    # Convert each gt object to HTML, if needed
+    table_divs <- lapply(gt_list, function(g) {
+      if (inherits(g, "gt_tbl")) {
+        htmltools::HTML(gt::as_raw_html(g))
+      } else {
+        g
+      }
+    })
+    
+    flex_basis <- if (n_cols <= 1) "100%" else sprintf("%.0f%%", 100 / n_cols)
+    
+    htmltools::tags$html(
+      htmltools::tags$head(
+        htmltools::tags$title(doc_title),
+        htmltools::tags$style(htmltools::HTML(sprintf(
+          "
+        body {
+          margin: %smm %smm %smm %smm;
+          font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        }
+        h1.page-title {
+          margin-left: %smm;
+          font-size: 18pt;
+        }
+        .tables {
+          display: flex;
+          flex-wrap: wrap;
+          gap: %spx;
+        }
+        .tables > div.table-block {
+          flex: 0 0 %s;
+        }
+        ",
+          margin_top_mm, margin_right_mm, margin_bottom_mm, margin_left_mm,
+          title_left_mm,
+          col_gap_px,
+          flex_basis
+        )))
+      ),
+      htmltools::tags$body(
+        htmltools::tags$h1(class = "page-title", doc_title),
+        htmltools::tags$div(
+          class = "tables",
+          lapply(table_divs, function(tbl) {
+            htmltools::tags$div(class = "table-block", tbl)
+          })
+        )
+      )
+    )
+  }
+  
   # ---------- HTML -> PDF (pagedown first, webshot2 fallback) ----------
   do_pdf <- function(
     gt_list, file, doc_title, n_cols = 2,
@@ -493,112 +556,62 @@ server <- function(input, output, session){
     out_pdf  <- tempfile(fileext = ".pdf")
     htmltools::save_html(page, out_html)
     
-    message("[do_pdf] Start. out_html = ", out_html, " | out_pdf = ", out_pdf, " | target file = ", file)
-    
     on.exit({
       if (file.exists(out_html)) unlink(out_html)
       if (file.exists(out_pdf))  unlink(out_pdf)
-      message("[do_pdf] on.exit cleanup complete.")
     }, add = TRUE)
     
     tried <- FALSE
     ok <- FALSE
     
-    # ---------- Try pagedown + Chrome ----------
+    # Try pagedown with Chrome/Chromium
     if (requireNamespace("pagedown", quietly = TRUE)) {
       ch <- .find_chrome()
-      message("[do_pdf] pagedown available. .find_chrome() returned: '", ch, "'")
-      
       if (nzchar(ch)) {
         options(pagedown.chrome = ch)
         Sys.setenv(PAGEDOWN_CHROMIUM = ch)
-      } else {
-        message("[do_pdf] .find_chrome() returned empty string.")
       }
-      
       tried <- TRUE
-      
-      res <- tryCatch({
-        message("[do_pdf] Calling pagedown::chrome_print() ...")
+      res <- try({
         pagedown::chrome_print(input = out_html, output = out_pdf, timeout = 180)
-        ok_local <- file.exists(out_pdf) && file.info(out_pdf)$size > 1024
-        if (!ok_local) {
-          message("[do_pdf] pagedown::chrome_print() ran but PDF is missing or tiny. file.exists=",
-                  file.exists(out_pdf), ", size=",
-                  if (file.exists(out_pdf)) file.info(out_pdf)$size else NA_real_)
-        } else {
-          message("[do_pdf] pagedown::chrome_print() produced PDF. size=",
-                  file.info(out_pdf)$size)
-        }
-        ok_local
-      }, error = function(e) {
-        message("[do_pdf] ERROR in pagedown::chrome_print(): ", conditionMessage(e))
-        FALSE
-      })
-      
+        file.exists(out_pdf) && file.info(out_pdf)$size > 1024
+      }, silent = TRUE)
       ok <- isTRUE(res)
-      message("[do_pdf] pagedown ok = ", ok)
-    } else {
-      message("[do_pdf] pagedown is NOT installed or not found.")
     }
     
-    # ---------- Fallback: webshot2 ----------
+    # Fallback: webshot2 (Chromote)
     if (!ok && requireNamespace("webshot2", quietly = TRUE)) {
-      message("[do_pdf] Trying fallback via webshot2::webshot() ...")
-      
-      res2 <- tryCatch({
+      res2 <- try({
         webshot2::webshot(
-          url = paste0("file://", normalizePath(out_html, winslash = "/")),
-          file = out_pdf,
-          vwidth = 1200, vheight = 1600, zoom = 1
+          url   = paste0("file://", normalizePath(out_html, winslash = "/")),
+          file  = out_pdf,
+          vwidth  = 1200,
+          vheight = 1600,
+          zoom    = 1
         )
-        ok_local <- file.exists(out_pdf) && file.info(out_pdf)$size > 1024
-        if (!ok_local) {
-          message("[do_pdf] webshot2::webshot() ran but PDF is missing or tiny. file.exists=",
-                  file.exists(out_pdf), ", size=",
-                  if (file.exists(out_pdf)) file.info(out_pdf)$size else NA_real_)
-        } else {
-          message("[do_pdf] webshot2::webshot() produced PDF. size=",
-                  file.info(out_pdf)$size)
-        }
-        ok_local
-      }, error = function(e) {
-        message("[do_pdf] ERROR in webshot2::webshot(): ", conditionMessage(e))
-        FALSE
-      })
-      
+        file.exists(out_pdf) && file.info(out_pdf)$size > 1024
+      }, silent = TRUE)
       ok <- isTRUE(res2)
-      message("[do_pdf] webshot2 ok = ", ok)
-    } else if (!ok) {
-      message("[do_pdf] webshot2 is NOT installed or not found.")
     }
     
-    # ---------- If still not ok, error out ----------
     if (!ok) {
       msg <- if (!tried) {
         "Neither 'pagedown' nor 'webshot2' is installed. Install one of them to enable PDF export:\ninstall.packages(c('pagedown','webshot2'))"
       } else {
         paste(
           "Could not render PDF with Chrome/Chromium.",
-          "Check logs for [do_pdf] messages to see specific errors from pagedown/webshot2.",
-          "Ensure Chrome/Chromium is installed and set its path, for example:",
+          "Please ensure Chrome/Chromium is installed and set its path, for example:",
           "  options(pagedown.chrome = '/path/to/Google Chrome')",
           "  Sys.setenv(PAGEDOWN_CHROMIUM = '/path/to/Google Chrome')",
           "Or place that path in a file named 'chrome-path.txt' next to app.R (first line only).",
           sep = "\n"
         )
       }
-      message("[do_pdf] FINAL FAILURE. Raising error.")
       stop(msg)
     }
     
-    # ---------- Copy to Shiny download target ----------
     if (!file.copy(out_pdf, file, overwrite = TRUE)) {
-      message("[do_pdf] Failed to copy out_pdf to target file.")
       stop("Failed to write PDF to the download target.")
-    } else {
-      message("[do_pdf] SUCCESS: Copied PDF to target file. size=",
-              file.info(file)$size)
     }
   }
   
