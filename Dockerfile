@@ -45,9 +45,12 @@ ENV CHROME_BIN=/usr/local/bin/google-chrome \
 # ----------------------------
 # Install R packages needed by the app
 # ----------------------------
+# Install CRAN pkgs (including remotes)
 RUN R -e "install.packages(c('shiny','shinydashboard','readxl','dplyr','tidyr','lubridate','stringr','purrr','htmltools','pagedown','webshot2','rmarkdown','V8','remotes'), repos='https://cloud.r-project.org')"
 
-RUN R -e "remotes::install_github('rstudio/juicyjuice'); remotes::install_github('rstudio/gt')"
+# Install juicyjuice + gt from GitHub using PAT
+RUN R -e "remotes::install_github('rstudio/juicyjuice', auth_token = Sys.getenv('GITHUB_PAT')); remotes::install_github('rstudio/gt', auth_token = Sys.getenv('GITHUB_PAT'))"
+
 
 # ----------------------------
 # Copy the Shiny app
