@@ -16,6 +16,27 @@ suppressPackageStartupMessages({
 brand_green <- "#1B5E20"
 STRINGS_PATHS <- c("./data/STRINGS_new.xlsx","data/STRINGS_new.xlsx","STRINGS_new.xlsx")
 
+# Small helper to locate Chrome/Chromium in the container
+.find_chrome <- function() {
+  # Prefer explicit option/env if set
+  candidates <- c(
+    getOption("pagedown.chrome", ""),
+    Sys.getenv("PAGEDOWN_CHROMIUM", ""),
+    "/usr/local/bin/google-chrome",
+    "/usr/bin/google-chrome"
+  )
+  
+  candidates <- candidates[nzchar(candidates)]
+  candidates <- candidates[file.exists(candidates)]
+  
+  if (length(candidates)) {
+    candidates[[1]]
+  } else {
+    ""
+  }
+}
+
+
 # ---- Force Chrome path for pagedown in container ----
 chrome_path <- "/usr/local/bin/google-chrome"
 
