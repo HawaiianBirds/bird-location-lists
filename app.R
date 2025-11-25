@@ -1,7 +1,4 @@
-#### Backup 14 - Final - Fix pretty PDF ####
-# Next steps (hopefully the final fix): Debug pdf rendering not respecting the order of the aviary tables (check AV 2)
-# Also add date generated in footer??? See "Git push issue fix" chat
-# app.R — Bird Location Lists Dashboard (pagedown/webshot2 + chrome-path.txt)
+#### Backup 15 - Final - Fix PDF table order & footer ####
 
 options(shiny.maxRequestSize = 100 * 1024^2)  # 100 MB
 
@@ -16,6 +13,7 @@ suppressPackageStartupMessages({
   # For PDF export:
   library(pagedown)
   library(webshot2)
+  library(writexl)
 })
 
 `%||%` <- function(a,b) if(!is.null(a)) a else b
@@ -314,6 +312,98 @@ strings_df <- function(){
     mutate(Aviary = as.character(Aviary), String = as.character(String))
 }
 
+# ---------- Build a data.frame version of an aviary table for Excel ----------
+make_aviary_df_for_excel <- function(df_aviary, aviary_name,
+                                     string_hint = NA_character_,
+                                     compact = FALSE) {
+  
+  # --------- PREP TABLE DATA (same as make_aviary_gt) ---------
+  df <- df_aviary %>%
+    mutate(
+      Enclosure = purrr::map_chr(`Bird moved to enclosure ID:`,
+                                 ~ normalize_enclosure(.x) %||% NA_character_),
+      Enclosure = gsub("INNER CHAMBER,? ?OUTER CHAMBER", "IN/OUT",
+                       Enclosure, ignore.case = TRUE),
+      Enclosure = gsub("INNER CHAMBER", "INNER", Enclosure, ignore.case = TRUE),
+      Enclosure = gsub("OUTER CHAMBER",  "OUTER", Enclosure, ignore.case = TRUE),
+      Name      = ifelse(is.na(`Name:`), "", as.character(`Name:`)),
+      Name      = substr(Name, 1, if (isTRUE(compact)) 10 else 12),
+      Bands     = ifelse(is.na(`Short color bands:`), "", as.character(`Short color bands:`)),
+      Bands     = gsub("[[:space:]]+", " ", Bands),
+      Move      = format_move_mmddyy(`Corrected date & time for data export:`)
+    ) %>%
+    arrange(Enclosure, desc(`Studbook number:`)) %>%
+    group_by(Enclosure) %>% 
+    mutate(.last_in_encl = dplyr::row_number() == dplyr::n()) %>%
+    ungroup() %>%
+    transmute(
+      `Aviary/Ch` = Enclosure,
+      `SB#`       = `Studbook number:`,
+      Sex         = `Sex:`,
+      Name        = Name,
+      Bands       = Bands,
+      Moved       = Move,
+      .last_in_encl
+    )
+  
+  # --------- ORDERING (same rules as make_aviary_gt) ---------
+  facility_here <- unique(as.character(df_aviary$`Facility:`))[1] %||% NA_character_
+  aviary_title  <- pretty_name(aviary_name)
+  
+  first_token <- function(x){
+    rest <- sub("^[^/]+/?", "", x)
+    if (identical(rest, x) || !nzchar(rest)) return(NA_character_)
+    sub(",.*$", "", rest)
+  }
+  
+  if (identical(facility_here, "MBCC") && grepl("^FBB1\\b", aviary_title, ignore.case = TRUE)) {
+    tail <- sub("^[^/]+/", "", df$`Aviary/Ch`)
+    letters_only <- toupper(gsub("[^A-Za-z]", "", tail))
+    lett_key <- ifelse(
+      nzchar(letters_only),
+      substring(letters_only, nchar(letters_only), nchar(letters_only)),
+      ""
+    )
+    get_min_num <- function(s) {
+      m <- gregexpr("[0-9]+", s, perl = TRUE)
+      v <- suppressWarnings(as.integer(unlist(regmatches(s, m))))
+      v <- v[!is.na(v)]
+      if (length(v)) min(v) else Inf
+    }
+    num_key <- vapply(tail, get_min_num, numeric(1))
+    df <- df %>%
+      mutate(.lett_key = lett_key, .num_key = num_key) %>%
+      arrange(desc(.lett_key), .num_key, `Aviary/Ch`, desc(`SB#`)) %>%
+      select(-.lett_key, -.num_key)
+    
+  } else if (identical(facility_here, "MBCC") &&
+             grepl("^FBB(2|3)\\b", aviary_title, ignore.case = TRUE)) {
+    
+    num_key <- suppressWarnings(
+      as.integer(sub("^[^/]+/(\\d+).*", "\\1", df$`Aviary/Ch`))
+    )
+    num_key[is.na(num_key)] <- Inf
+    df <- df %>%
+      mutate(.num_key = num_key) %>%
+      arrange(.num_key, `Aviary/Ch`, desc(`SB#`)) %>%
+      select(-.num_key)
+    
+  } else {
+    tok   <- vapply(df$`Aviary/Ch`, first_token, character(1))
+    num   <- suppressWarnings(as.integer(tok))
+    isnum <- !is.na(num)
+    df <- df %>%
+      mutate(.tok = tok, .num = ifelse(isnum, num, Inf), .isn = isnum) %>%
+      arrange(desc(.isn), .num, .tok, desc(`SB#`)) %>%
+      select(-.tok, -.num, -.isn)
+  }
+  
+  # Drop helper column for export
+  df %>% select(-.last_in_encl)
+}
+
+
+
 # ---------- UI ----------
 header <- dashboardHeader(title = "Bird Location Lists")
 sidebar <- dashboardSidebar(
@@ -346,24 +436,28 @@ body <- dashboardBody(
       box(width = 12, solidHeader = TRUE,
           title = uiOutput("title_kbcc_al"),
           downloadButton("dl_pdf_kbcc_al", "Download PDF"),
+          downloadButton("dl_xlsx_kbcc_al", "Download Excel"),
           uiOutput("grid_kbcc_al"))
     )),
     tabItem("kbcc_fb", fluidRow(
       box(width = 12, solidHeader = TRUE,
           title = uiOutput("title_kbcc_fb"),
           downloadButton("dl_pdf_kbcc_fb", "Download PDF"),
+          downloadButton("dl_xlsx_kbcc_fb", "Download Excel"),
           uiOutput("grid_kbcc_fb"))
     )),
     tabItem("mbcc_al", fluidRow(
       box(width = 12, solidHeader = TRUE,
           title = uiOutput("title_mbcc_al"),
           downloadButton("dl_pdf_mbcc_al", "Download PDF"),
+          downloadButton("dl_xlsx_mbcc_al", "Download Excel"),
           uiOutput("grid_mbcc_al"))
     )),
     tabItem("mbcc_fb", fluidRow(
       box(width = 12, solidHeader = TRUE,
           title = uiOutput("title_mbcc_fb"),
           downloadButton("dl_pdf_mbcc_fb", "Download PDF"),
+          downloadButton("dl_xlsx_mbcc_fb", "Download Excel"),
           uiOutput("grid_mbcc_fb"))
     ))
   )
@@ -498,6 +592,152 @@ server <- function(input, output, session){
       make_aviary_gt(df, aviary_name = display_av, string_hint = hint, compact = compact)
     })
   }
+  
+  library(writexl)
+  
+  # ---------- Excel helper: rbind all aviaries into one sheet ----------
+  excel_df_for <- function(facility, species_is_al, compact = FALSE) {
+    bm <- bm_core() %>%
+      dplyr::filter(
+        `Facility:` == facility,
+        if (species_is_al) Species == "AL" else Species != "AL"
+      )
+    
+    if (!nrow(bm)) {
+      return(tibble::tibble())
+    }
+    
+    # Match the aviary naming tweaks you use in make_tables()
+    bm <- bm %>%
+      dplyr::mutate(Aviary = as.character(Aviary)) %>%
+      dplyr::arrange(Aviary) %>%
+      dplyr::mutate(
+        Aviary = dplyr::case_when(
+          facility == "MBCC" & grepl("^FBB1", Aviary, ignore.case = TRUE) ~ "FBB1",
+          facility == "KBCC" & grepl("^FBB1", Aviary, ignore.case = TRUE) ~ "FBB1 (PIKO 1)",
+          TRUE ~ Aviary
+        )
+      )
+    
+    splits       <- split(bm, bm$Aviary, drop = TRUE)
+    aviary_names <- sort(unique(bm$Aviary))
+    
+    # Helper to build a tidy data frame for one aviary
+    build_aviary_df <- function(av) {
+      df <- splits[[av]]
+      
+      # ----- STRING / hint, same logic as in make_tables() -----
+      hint_vec <- df$String[which(!is.na(df$String) & nzchar(df$String))] %>% unique()
+      hint_vec <- chartr("\u00A0"," ", hint_vec)
+      hint_vec <- trimws(hint_vec)
+      
+      av_norm    <- trimws(chartr("\u00A0"," ", av))
+      display_av <- av_norm
+      
+      if (identical(facility, "MBCC")) {
+        display_av <- gsub("[[:space:]]*\\(PIKO 1\\)[[:space:]]*$", "", display_av, ignore.case = TRUE)
+        display_av <- gsub("[[:space:]]+PIKO 1[[:space:]]*$",       "", display_av, ignore.case = TRUE)
+        display_av <- trimws(display_av)
+      } else if (identical(facility, "KBCC")) {
+        if (grepl("^FBB1\\b", display_av, ignore.case = TRUE)) {
+          display_av <- gsub("[[:space:]]*\\(PIKO 1\\)[[:space:]]*$", "", display_av, ignore.case = TRUE)
+          display_av <- "FBB1 (PIKO 1)"
+        }
+      }
+      
+      if (grepl("^FBB1\\b", display_av, ignore.case = TRUE)) {
+        hint_vec <- hint_vec[ !grepl("^\\(?[[:space:]]*PIKO 1[[:space:]]*\\)?$", hint_vec, ignore.case = TRUE) ]
+        hint_vec <- gsub("\\(?[[:space:]]*PIKO 1[[:space:]]*\\)?", "", hint_vec, ignore.case = TRUE)
+        hint_vec <- trimws(hint_vec)
+        hint_vec <- hint_vec[nzchar(hint_vec)]
+      }
+      
+      hint <- if (length(hint_vec)) paste(sort(hint_vec), collapse = "/") else NA_character_
+      
+      # ----- PREP TABLE DATA (parallel to make_aviary_gt) -----
+      df2 <- df %>%
+        dplyr::mutate(
+          Enclosure = purrr::map_chr(`Bird moved to enclosure ID:`, ~ normalize_enclosure(.x) %||% NA_character_),
+          Enclosure = gsub("INNER CHAMBER,? ?OUTER CHAMBER", "IN/OUT", Enclosure, ignore.case = TRUE),
+          Enclosure = gsub("INNER CHAMBER", "INNER", Enclosure, ignore.case = TRUE),
+          Enclosure = gsub("OUTER CHAMBER", "OUTER", Enclosure, ignore.case = TRUE),
+          Name      = ifelse(is.na(`Name:`), "", as.character(`Name:`)),
+          Name      = substr(Name, 1, if (isTRUE(compact)) 10 else 12),
+          Bands     = ifelse(is.na(`Short color bands:`), "", as.character(`Short color bands:`)),
+          Bands     = gsub("[[:space:]]+", " ", Bands),
+          Moved     = format_move_mmddyy(`Corrected date & time for data export:`)
+        ) %>%
+        dplyr::arrange(Enclosure, dplyr::desc(`Studbook number:`)) %>%
+        dplyr::group_by(Enclosure) %>%
+        dplyr::mutate(.last_in_encl = dplyr::row_number() == dplyr::n()) %>%
+        dplyr::ungroup()
+      
+      # Same MBCC quirks / ordering as in make_aviary_gt()
+      facility_here <- unique(as.character(df2$`Facility:`))[1] %||% NA_character_
+      aviary_title  <- pretty_name(display_av)
+      
+      first_token <- function(x){
+        rest <- sub("^[^/]+/?", "", x)
+        if (identical(rest, x) || !nzchar(rest)) return(NA_character_)
+        sub(",.*$", "", rest)
+      }
+      
+      if (identical(facility_here, "MBCC") && grepl("^FBB1\\b", aviary_title, ignore.case = TRUE)) {
+        tail <- sub("^[^/]+/", "", df2$Enclosure)
+        letters_only <- toupper(gsub("[^A-Za-z]", "", tail))
+        lett_key <- ifelse(
+          nzchar(letters_only),
+          substring(letters_only, nchar(letters_only), nchar(letters_only)), ""
+        )
+        get_min_num <- function(s) {
+          m <- gregexpr("[0-9]+", s, perl = TRUE)
+          v <- suppressWarnings(as.integer(unlist(regmatches(s, m))))
+          v <- v[!is.na(v)]
+          if (length(v)) min(v) else Inf
+        }
+        num_key <- vapply(tail, get_min_num, numeric(1))
+        df2 <- df2 %>%
+          dplyr::mutate(.lett_key = lett_key, .num_key = num_key) %>%
+          dplyr::arrange(dplyr::desc(.lett_key), .num_key, Enclosure, dplyr::desc(`Studbook number:`)) %>%
+          dplyr::select(-.lett_key, -.num_key)
+      } else if (identical(facility_here, "MBCC") && grepl("^FBB(2|3)\\b", aviary_title, ignore.case = TRUE)) {
+        num_key <- suppressWarnings(as.integer(sub("^[^/]+/(\\d+).*", "\\1", df2$Enclosure)))
+        num_key[is.na(num_key)] <- Inf
+        df2 <- df2 %>%
+          dplyr::mutate(.num_key = num_key) %>%
+          dplyr::arrange(.num_key, Enclosure, dplyr::desc(`Studbook number:`)) %>%
+          dplyr::select(-.num_key)
+      } else {
+        tok   <- vapply(df2$Enclosure, first_token, character(1))
+        num   <- suppressWarnings(as.integer(tok))
+        isnum <- !is.na(num)
+        df2 <- df2 %>%
+          dplyr::mutate(.tok = tok, .num = ifelse(isnum, num, Inf), .isn = isnum) %>%
+          dplyr::arrange(dplyr::desc(.isn), .num, .tok, dplyr::desc(`Studbook number:`)) %>%
+          dplyr::select(-.tok, -.num, -.isn)
+      }
+      
+      # Final tidy output for Excel; repeat display_av + hint on each row
+      df2 %>%
+        dplyr::transmute(
+          Facility   = `Facility:`,
+          Species    = Species,
+          Aviary     = display_av,
+          String     = hint,
+          `Aviary/Ch`= Enclosure,
+          `SB#`      = `Studbook number:`,
+          Sex        = `Sex:`,
+          Name       = Name,
+          Bands      = Bands,
+          Moved      = Moved
+        )
+    }
+    
+    # Build + rbind for all aviaries in this tab
+    df_all <- purrr::map_dfr(aviary_names, build_aviary_df)
+    df_all
+  }
+  
   
   ui_grid <- function(gt_list, n_cols = 2){
     if(!length(gt_list)) return(NULL)
@@ -851,6 +1091,59 @@ server <- function(input, output, session){
 
   
   # ---------- Download handlers ----------
+  output$dl_xlsx_kbcc_al <- downloadHandler(
+    filename = function() {
+      paste0("KBCC Alala Locations as of ",
+             format(as.Date(input$subset_date), "%Y.%m.%d"),
+             ".xlsx")
+    },
+    contentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    content = function(file) {
+      df <- excel_df_for("KBCC", species_is_al = TRUE, compact = TRUE)
+      writexl::write_xlsx(df, path = file)
+    }
+  )
+  
+  output$dl_xlsx_kbcc_fb <- downloadHandler(
+    filename = function() {
+      paste0("KBCC Forest Bird Locations as of ",
+             format(as.Date(input$subset_date), "%Y.%m.%d"),
+             ".xlsx")
+    },
+    contentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    content = function(file) {
+      df <- excel_df_for("KBCC", species_is_al = FALSE, compact = TRUE)
+      writexl::write_xlsx(df, path = file)
+    }
+  )
+  
+  output$dl_xlsx_mbcc_al <- downloadHandler(
+    filename = function() {
+      paste0("MBCC Alala Locations as of ",
+             format(as.Date(input$subset_date), "%Y.%m.%d"),
+             ".xlsx")
+    },
+    contentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    content = function(file) {
+      df <- excel_df_for("MBCC", species_is_al = TRUE, compact = TRUE)
+      writexl::write_xlsx(df, path = file)
+    }
+  )
+  
+  output$dl_xlsx_mbcc_fb <- downloadHandler(
+    filename = function() {
+      paste0("MBCC Forest Bird Locations as of ",
+             format(as.Date(input$subset_date), "%Y.%m.%d"),
+             ".xlsx")
+    },
+    contentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    content = function(file) {
+      df <- excel_df_for("MBCC", species_is_al = FALSE, compact = TRUE)
+      writexl::write_xlsx(df, path = file)
+    }
+  )
+  
+  
   output$dl_pdf_kbcc_al <- downloadHandler(
     filename = function() {
       paste0("KBCC Alala Locations as of ", format(as.Date(input$subset_date), "%Y.%m.%d"), ".pdf")
@@ -934,6 +1227,7 @@ server <- function(input, output, session){
     }
   })
 }
+
 
 
 shinyApp(ui, server)

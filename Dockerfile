@@ -45,7 +45,7 @@ ENV CHROME_BIN=/usr/local/bin/google-chrome \
 # Install R packages needed by the app
 # ----------------------------
 # Install CRAN pkgs (including remotes)
-RUN R -e "install.packages(c('shiny','shinydashboard','readxl','dplyr','tidyr','lubridate','stringr','purrr','htmltools','pagedown','webshot2','rmarkdown','V8','remotes'), repos='https://cloud.r-project.org')"
+RUN R -e "install.packages(c('shiny','shinydashboard','readxl','writexl','dplyr','tidyr','lubridate','stringr','purrr','htmltools','pagedown','webshot2','rmarkdown','V8','remotes'), repos='https://cloud.r-project.org')"
 
 RUN R -e "remotes::install_git('https://github.com/rstudio/juicyjuice.git'); remotes::install_git('https://github.com/rstudio/gt.git')"
 
