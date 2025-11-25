@@ -528,12 +528,16 @@ server <- function(input, output, session){
       `Forest bird moved to chamber letter(s):`,`Bird moved to enclosure ID:`,
       `Corrected date & time for data export:`
     )
+    
     d <- details_alive() %>% select(
-      `Studbook number:`,`Name:`,`Sex:`,`Short color bands:`,`Hatch year:` = any_of("Hatch year:")
+      `Studbook number:`,`Name:`,`Sex:`,`Short color bands:`,
+      `Hatch year:` = any_of("Hatch year:")
     )
     
-    m2 <- m %>% group_by(`Studbook number:`, `Move type:`) %>%
-      slice_max(as_posix_safe(`Date & time of move:`), n = 1, with_ties = FALSE) %>% ungroup()
+    m2 <- m %>% 
+      group_by(`Studbook number:`, `Move type:`) %>%
+      slice_max(as_posix_safe(`Date & time of move:`), n = 1, with_ties = FALSE) %>%
+      ungroup()
     
     bm <- merge(d, m2, by = "Studbook number:", all.x = TRUE) %>%
       group_by(`Studbook number:`) %>%
@@ -542,14 +546,41 @@ server <- function(input, output, session){
       filter(!is.na(`Move type:`) & `Move type:` != "to other") %>%
       mutate(
         Species = substr(`Studbook number:`, 1, 2),
-        Aviary  = if_else(Species == "AL", `ʻAlalā moved to aviary:`, `Forest bird moved to aviary:`)
+        Aviary  = if_else(
+          Species == "AL",
+          `ʻAlalā moved to aviary:`,
+          `Forest bird moved to aviary:`
+        )
       ) %>%
       filter(!is.na(Aviary) & Aviary != "drop")
     
+    # ---- Join strings ----
     s <- strings_react()
-    if(!is.null(s) && nrow(s)) bm <- bm %>% left_join(s, by = c("Aviary" = "Aviary")) else bm$String <- NA_character_
+    if (!is.null(s) && nrow(s)) {
+      bm <- bm %>%
+        left_join(s, by = c("Aviary" = "Aviary"))
+    } else {
+      bm$String <- NA_character_
+    }
+    
+    # ---- Clean PIKO-related strings for MBCC FBB1/FBB2 ----
+    bm <- bm %>%
+      mutate(
+        String = chartr("\u00A0", " ", String),   # normalize non-breaking spaces
+        String = trimws(String),
+        String = ifelse(
+          `Facility:` == "MBCC" &
+            grepl("^FBB[12]\\b", Aviary, ignore.case = TRUE) &
+            grepl("PIKO", String, ignore.case = TRUE),
+          NA_character_,
+          String
+        )
+      )
+    
+    
     bm %>% arrange(Aviary)
   })
+  
   
   # build list of mini-gt tables (alpha by Aviary)
   make_tables <- function(facility, species_is_al, compact = FALSE){
@@ -564,6 +595,7 @@ server <- function(input, output, session){
       mutate(
         Aviary = dplyr::case_when(
           facility == "MBCC" & grepl("^FBB1", Aviary, ignore.case = TRUE) ~ "FBB1",
+          facility == "MBCC" & grepl("^FBB2", Aviary, ignore.case = TRUE) ~ "FBB2",
           facility == "KBCC" & grepl("^FBB1", Aviary, ignore.case = TRUE) ~ "FBB1 (PIKO 1)",
           TRUE ~ Aviary
         )
@@ -633,6 +665,7 @@ server <- function(input, output, session){
       dplyr::mutate(
         Aviary = dplyr::case_when(
           facility == "MBCC" & grepl("^FBB1", Aviary, ignore.case = TRUE) ~ "FBB1",
+          facility == "MBCC" & grepl("^FBB2", Aviary, ignore.case = TRUE) ~ "FBB2",
           facility == "KBCC" & grepl("^FBB1", Aviary, ignore.case = TRUE) ~ "FBB1 (PIKO 1)",
           TRUE ~ Aviary
         )
