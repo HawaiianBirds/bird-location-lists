@@ -272,7 +272,7 @@ make_aviary_gt <- function(df_aviary, aviary_name, string_hint = NA_character_, 
       heading.align = "left",
       column_labels.background.color = brand_green,
       column_labels.font.weight = "bold",
-      table.font.size = gt::px(if (isTRUE(compact)) 8.2 else 10.5),
+      table.font.size = gt::px(if (isTRUE(compact)) 10.5 else 10.5),
       data_row.padding = gt::px(if (isTRUE(compact)) 0.8 else 2.8),
       heading.padding  = gt::px(if (isTRUE(compact)) 2.2 else 5.5)
     ) |>
@@ -542,7 +542,7 @@ server <- function(input, output, session){
     col_align        = if (n_cols <= 1) "left" else "initial",
     margin_top_mm    = 2,
     margin_right_mm  = 2,
-    margin_bottom_mm = 2,
+    margin_bottom_mm = 1,
     margin_left_mm   = 2,
     title_left_mm    = 11,
     col_gap_px       = 2,
