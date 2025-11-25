@@ -5,6 +5,9 @@
 
 options(shiny.maxRequestSize = 100 * 1024^2)  # 100 MB
 
+# Force session timezone to Hawaiʻi
+Sys.setenv(TZ = "Pacific/Honolulu")
+
 suppressPackageStartupMessages({
   library(shiny); library(shinydashboard)
   library(readxl); library(dplyr); library(tidyr)
@@ -18,6 +21,13 @@ suppressPackageStartupMessages({
 `%||%` <- function(a,b) if(!is.null(a)) a else b
 brand_green <- "#1B5E20"
 STRINGS_PATHS <- c("./data/STRINGS_new.xlsx","data/STRINGS_new.xlsx","STRINGS_new.xlsx")
+
+# Date helper for UTC to HST -----
+# Always use Hawaiʻi time for "today"
+today_hst <- function() {
+  # Always compute "today" in Hawaiʻi time, regardless of system TZ
+  as.Date(format(Sys.time(), tz = "Pacific/Honolulu"))
+}
 
 # ---- Chrome path discovery for local use (Mac/RStudio) ----
 .find_chrome <- function() {
@@ -321,7 +331,7 @@ sidebar <- dashboardSidebar(
     hr(),
     fileInput("details_file", "Load bird details:", accept = ".xlsx"),
     fileInput("moves_file",   "Load bird moves:", accept = ".xlsx"),
-    dateInput("subset_date",  "List all bird locations as of:", value = Sys.Date()),
+    dateInput("subset_date",  "List all bird locations as of:", value = today_hst()),
     helpText("")
   )
 )
@@ -536,7 +546,7 @@ server <- function(input, output, session){
     margin_left_mm   = 2,
     title_left_mm    = 11,
     col_gap_px       = 2,
-    footer_text      = paste("Generated:", format(Sys.Date(), "%m/%d/%Y"))
+    footer_text      = paste("Generated:", format(today_hst(), "%m/%d/%Y"))
   ) {
     n <- length(gt_list)
     if (n == 0) {
