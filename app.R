@@ -149,8 +149,19 @@ normalize_enclosure <- function(enc) {
   toks <- toks[nzchar(toks)]
   if (!length(toks)) return(bldg)
   
+  # Upper-case for consistent matching
   toks <- toupper(toks)
-  toks <- sub("^N(.*)$", "\\1", toks)  # strip leading N (e.g., NAAB -> AAB)
+  
+  # Special case: AICUNA = AICU + NA → keep only AICU
+  toks[toks == "AICUNA"] <- "AICU"
+  
+  # Drop NA-like tokens
+  toks <- ifelse(toks %in% c("NA","N/A","N"), "", toks)
+  toks <- toks[nzchar(toks)]
+  if (!length(toks)) return(bldg)
+  
+  # Strip leading N (e.g., NAAB -> AAB)
+  toks <- sub("^N(.*)$", "\\1", toks)
   
   # Expand NAAB -> AAB -> AA,B
   toks <- unlist(lapply(toks, function(t) {
@@ -160,6 +171,7 @@ normalize_enclosure <- function(enc) {
   # Collapse AA -> A and AB -> B
   toks <- ifelse(toks == "AA", "A", toks)
   toks <- ifelse(toks == "AB", "B", toks)
+  
   
   toks <- toks[nzchar(toks)]
   if (!length(toks)) return(bldg)
@@ -571,8 +583,9 @@ server <- function(input, output, session){
       display_av <- av_norm
       
       if (identical(facility, "MBCC")) {
-        display_av <- gsub("[[:space:]]*\\(PIKO 1\\)[[:space:]]*$", "", display_av, ignore.case = TRUE)
-        display_av <- gsub("[[:space:]]+PIKO 1[[:space:]]*$",       "", display_av, ignore.case = TRUE)
+        # Strip any trailing PIKO / PIKO 1 / PIKO 2, with or without parentheses
+        display_av <- gsub("[[:space:]]*\\(PIKO( [12])?\\)[[:space:]]*$", "", display_av, ignore.case = TRUE)
+        display_av <- gsub("[[:space:]]+PIKO( [12])?[[:space:]]*$",       "", display_av, ignore.case = TRUE)
         display_av <- trimws(display_av)
       } else if (identical(facility, "KBCC")) {
         if (grepl("^FBB1\\b", display_av, ignore.case = TRUE)) {
@@ -581,19 +594,25 @@ server <- function(input, output, session){
         }
       }
       
-      if (grepl("^FBB1\\b", display_av, ignore.case = TRUE)) {
-        hint_vec <- hint_vec[ !grepl("^\\(?[[:space:]]*PIKO 1[[:space:]]*\\)?$", hint_vec, ignore.case = TRUE) ]
-        hint_vec <- gsub("\\(?[[:space:]]*PIKO 1[[:space:]]*\\)?", "", hint_vec, ignore.case = TRUE)
+      
+      if (identical(facility, "MBCC") &&
+          grepl("^FBB[12]\\b", display_av, ignore.case = TRUE)) {
+        # Remove standalone "PIKO", "PIKO 1", "PIKO 2" from the hint text
+        pikopat <- "\\(?[[:space:]]*PIKO([[:space:]]+[12])?[[:space:]]*\\)?"
+        
+        hint_vec <- hint_vec[ !grepl(pikopat, hint_vec, ignore.case = TRUE) ]
+        hint_vec <- gsub(pikopat, "", hint_vec, ignore.case = TRUE)
         hint_vec <- trimws(hint_vec)
         hint_vec <- hint_vec[nzchar(hint_vec)]
       }
+      
+      
       
       hint <- if (length(hint_vec)) paste(sort(hint_vec), collapse="/") else NA_character_
       make_aviary_gt(df, aviary_name = display_av, string_hint = hint, compact = compact)
     })
   }
   
-  library(writexl)
   
   # ---------- Excel helper: rbind all aviaries into one sheet ----------
   excel_df_for <- function(facility, species_is_al, compact = FALSE) {
@@ -637,6 +656,7 @@ server <- function(input, output, session){
       if (identical(facility, "MBCC")) {
         display_av <- gsub("[[:space:]]*\\(PIKO 1\\)[[:space:]]*$", "", display_av, ignore.case = TRUE)
         display_av <- gsub("[[:space:]]+PIKO 1[[:space:]]*$",       "", display_av, ignore.case = TRUE)
+        display_av <- gsub("[[:space:]]+PIKO 2[[:space:]]*$",       "", display_av, ignore.case = TRUE)
         display_av <- trimws(display_av)
       } else if (identical(facility, "KBCC")) {
         if (grepl("^FBB1\\b", display_av, ignore.case = TRUE)) {
