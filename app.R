@@ -1,5 +1,8 @@
 #### Backup 14 - Final - Fix pretty PDF ####
+# Next steps (hopefully the final fix): Debug pdf rendering not respecting the order of the aviary tables (check AV 2)
+# Also add date generated in footer??? See "Git push issue fix" chat
 # app.R — Bird Location Lists Dashboard (pagedown/webshot2 + chrome-path.txt)
+
 options(shiny.maxRequestSize = 100 * 1024^2)  # 100 MB
 
 suppressPackageStartupMessages({
@@ -532,48 +535,27 @@ server <- function(input, output, session){
     margin_bottom_mm = 2,
     margin_left_mm   = 2,
     title_left_mm    = 11,
-    col_gap_px       = 3
+    col_gap_px       = 2,
+    footer_text      = paste("Generated:", format(Sys.Date(), "%m/%d/%Y"))
   ) {
     n <- length(gt_list)
     if (n == 0) {
       stop("grid_html_for_pdf(): gt_list is empty.")
     }
     
-    # Keep your ordering helper if you have it
-    if (exists("order_for_pdf_columns", mode = "function")) {
-      idx <- order_for_pdf_columns(n, n_cols)
-      gt_list <- gt_list[idx]
-    }
+    # IMPORTANT: keep original order of gt_list (no reordering)
+    # If you had order_for_pdf_columns(), it is now intentionally *not* used.
     
-    # Approximate height for scaling (same logic as before)
+    # Rough layout + scaling so tables fit on one A4 page
     rows       <- if (n_cols <= 1) n else ceiling(max(1, n) / n_cols)
     content_px <- rows * 118 + max(0, rows - 1) * 2
-    page_h_px  <- 842 * 1.3333  # A4 @ ~96dpi
+    page_h_px  <- 842 * 1.3333  # A4 @ ~96 dpi
     scale      <- min(1, page_h_px / max(1, content_px))
     scale      <- max(0.28, scale * 0.985)
-    
-    # Build content as explicit columns instead of CSS column-count
-    if (n_cols <= 1) {
-      # Single column = just stack all gt tables
-      content_tags <- tagList(lapply(gt_list, as.tags))
-    } else {
-      # Split gt_list across n_cols explicitly (by position)
-      cols_list <- vector("list", n_cols)
-      for (i in seq_along(gt_list)) {
-        col_idx <- ((i - 1) %% n_cols) + 1
-        cols_list[[col_idx]] <- c(cols_list[[col_idx]], list(as.tags(gt_list[[i]])))
-      }
-      
-      cols_divs <- lapply(cols_list, function(tts) {
-        div(class = "col", tagList(tts))
-      })
-      content_tags <- div(class = "cols-container", !!!cols_divs)
-    }
     
     columns_style <- if (n_cols <= 1) {
       "display:inline-block; width:auto; text-align:left;"
     } else {
-      # We now use flexbox for columns, but keep this for any inline tweaks
       "display:block; width:100%; text-align:initial;"
     }
     
@@ -581,141 +563,148 @@ server <- function(input, output, session){
       text_ = "<!DOCTYPE html>
 <html>
 <head>
-  <meta charset='utf-8'>
-  <style>
-    @page {
-      size: A4 portrait;
-      margin-top: {{mt}}mm;
-      margin-right: {{mr}}mm;
-      margin-bottom: {{mb}}mm;
-      margin-left: {{ml}}mm;
-    }
+<meta charset='utf-8'>
+<style>
+  @page {
+    size: A4 portrait;
+    margin-top: {{mt}}mm;
+    margin-right: {{mr}}mm;
+    margin-bottom: {{mb}}mm;
+    margin-left: {{ml}}mm;
+  }
 
-    :root {
-      --gap: {{gap}}px;
-    }
+  :root { --gap: {{gap}}px }
 
-    @media print {
-      * {
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important;
-      }
-      .gt_table, .gt_table * {
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important;
-      }
-    }
+  body {
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial;
+    margin:0;
+  }
 
-    body {
-      font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial;
-      margin:0;
+  @media print {
+    * {
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
     }
+    .gt_table, .gt_table * {
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+  }
 
-    header.title {
-      position:fixed;
-      top:3mm;
-      left:{{title_left}}mm;
-      right:8mm;
-      text-align:left;
-      font-weight:700;
-      font-size:16px;
-    }
+  header.title {
+    position:fixed;
+    top:3mm;
+    left:{{title_left}}mm;
+    right:8mm;
+    text-align:left;
+    font-weight:700;
+    font-size:16px;
+  }
 
-    .content {
-      position:relative;
-      margin-top:8mm;
-      margin-bottom:0mm;
-    }
+  .content {
+    position:relative;
+    margin-top:8mm;
+    margin-bottom:0mm;
+  }
 
-    .wrap {
-      transform-origin: top left;
-      text-align: left;
-    }
+  .wrap {
+    transform-origin: top left;
+    text-align: left;
+  }
 
-    /* New explicit column layout using flexbox */
-    .cols-container {
-      display:flex;
-      flex-direction:row;
-      align-items:flex-start;
-      justify-content:flex-start;
-      gap: var(--gap);
-      text-align: {{col_align}};
-    }
+  .columns {
+    column-count: {{ncols}};
+    column-gap: var(--gap);
+    column-fill: auto;
+    text-align: {{col_align}};
+  }
 
-    .cols-container .col {
-      flex: 1 1 0;
-      display:flex;
-      flex-direction:column;
-      align-items:stretch;
-    }
+  .gt_table {
+    margin-top:0 !important;
+    margin-bottom:0 !important;
+    break-inside:avoid-column;
+    page-break-inside:auto;
+    width:auto;
+    max-width:none;
+    table-layout:fixed;
+    border-collapse:collapse;
+  }
 
-    .gt_table {
-      margin-top:0 !important;
-      margin-bottom:0 !important;
-      break-inside:avoid-column;
-      page-break-inside:auto;
-      width:auto;
-      max-width:none;
-      table-layout:fixed;
-      border-collapse:collapse;
-    }
+  .gt_table td, .gt_table th {
+    word-break:break-word;
+    white-space:normal;
+  }
 
-    .gt_table td, .gt_table th {
-      word-break:break-word;
-      white-space:normal;
-    }
+  .gt_table .gt_col_headings {
+    font-size:10.5px;
+    line-height:1.05;
+  }
 
-    .gt_table .gt_col_headings{
-      font-size:10.5px;
-      line-height:1.05;
-    }
+  .gt_table .gt_row {
+    font-size:10.5px;
+    line-height:1.05;
+  }
 
-    .gt_table .gt_row{
-      font-size:10.5px;
-      line-height:1.05;
-    }
+  .gt_table .gt_title {
+    font-size:10.5px;
+    line-height:1.05;
+    margin:0;
+    padding:0;
+  }
 
-    .gt_table .gt_title{
-      font-size:10.5px;
-      line-height:1.05;
-      margin:0;
-      padding:0;
-    }
+  .gt_table .gt_col_headings,
+  .gt_table .gt_row,
+  .gt_table .gt_title,
+  .gt_table .gt_heading {
+    padding-top:0 !important;
+    padding-bottom:0 !important;
+  }
 
-    .gt_table .gt_col_headings,
-    .gt_table .gt_row,
-    .gt_table .gt_title,
-    .gt_table .gt_heading {
-      padding-top:0 !important;
-      padding-bottom:0 !important;
-    }
+  .gt_table th,
+  .gt_table td {
+    padding-top:0 !important;
+    padding-bottom:0 !important;
+  }
 
-    .gt_table th, .gt_table td {
-      padding-top:0 !important;
-      padding-bottom:0 !important;
-    }
-  </style>
+  /* Footer at bottom of page */
+  footer.footer {
+    position: fixed;
+    bottom: 4mm;
+    left: {{ml}}mm;
+    right: 8mm;
+    font-size: 10px;
+    color: #000000;
+    text-align: right;
+  }
+</style>
 </head>
 <body>
   <header class='title'>{{doc_title}}</header>
   <div class='content'>
-    <div class='wrap' style='transform: scale({{scale}}); width: calc(100%/{{scale}});'>
+    <div class='wrap'
+         style='transform: scale({{scale}}); width: calc(100%/{{scale}});'>
       <div class='columns' style='{{columns_style}}'>{{content}}</div>
     </div>
   </div>
+  <footer class='footer'>{{footer_text}}</footer>
 </body>
 </html>",
-      content       = content_tags,
+      content       = tagList(lapply(gt_list, function(gtt) as.tags(gtt))),
       scale         = sprintf("%.3f", scale),
       doc_title     = doc_title,
       ncols         = max(1, n_cols),
       gap           = col_gap_px,
       col_align     = col_align,
-      mt = margin_top_mm, mr = margin_right_mm, mb = margin_bottom_mm, ml = margin_left_mm,
+      mt            = margin_top_mm,
+      mr            = margin_right_mm,
+      mb            = margin_bottom_mm,
+      ml            = margin_left_mm,
       title_left    = title_left_mm,
-      columns_style = columns_style
+      columns_style = columns_style,
+      footer_text   = footer_text
     )
   }
+  
   
   # ---------- HTML -> PDF (Docker = Chrome CLI, local = pagedown/webshot2) ----------
   do_pdf <- function(
@@ -935,5 +924,6 @@ server <- function(input, output, session){
     }
   })
 }
+
 
 shinyApp(ui, server)
